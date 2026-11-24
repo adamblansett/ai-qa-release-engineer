@@ -2,23 +2,24 @@
 
 > Open-source, self-hosted AI QA and release engineering platform for E2E test generation, CI/CD health checks, regression execution, and deployment verification.
 
-**Roadmap Stage:** Phase 2 — Administrative, Quality & Specialized Additions · **Status:** Initialized Starter Scaffold
+**Roadmap Stage:** Phase 2 — Administrative, Quality & Specialized Additions · **Status:** Phase 1 Core Platform Implemented
 
-## Planned Core Capabilities
+## Core Capabilities
 
-- **E2E Test Generation:** Spec-driven Playwright & API regression test synthesis from user flows and OpenAPI specs.
-- **CI/CD Health Checks:** Flaky-test clustering, build failure triage, and workflow configuration validation.
-- **Regression Execution:** Contract, snapshot, and LLM-eval gate orchestration with deterministic baselines.
-- **Deployment Verification:** Post-deploy smoke probes, health/metrics assertions, and rollback readiness gates.
+- **E2E Test Generation (`/api/v1/testgen`):** OpenAPI 3.x YAML/JSON and user-flow test synthesis producing runnable Playwright TypeScript and `pytest` + `httpx` suites with schema assertions, negative validation cases, auth guards, and HITL publish approvals.
+- **CI/CD Health Checks (`/api/v1/ci-triage`):** Deterministic log parser & root-cause classifier (`infra_oom`, `timeout`, `dependency_error`, `lint_type_error`, `assertion_failure`), flaky-test transition clustering, and GitHub Actions YAML security/reliability auditing (`WF001`–`WF008`).
+- **Regression Execution (`/api/v1/regression`):** Contract compatibility diffing, recursive JSON snapshot diffs, deterministic LLM-eval rubric scoring with PII leak penalties, p95 latency drift checks, and HITL baseline promotion.
+- **Deployment Verification (`/api/v1/release-gate`):** SSRF-guarded post-deploy smoke probes, 6-gate Go/No-Go readiness checklist, canary SLO enforcement, and HITL promotion & emergency rollback execution.
+- **Governance, RBAC & Guardrails (`/api/v1/audit`, `/api/v1/auth`):** Roles (`viewer`, `qa_engineer`, `release_manager`, `admin`), HMAC-SHA256 Bearer tokens, SHA-256 hash-chained audit trail with tamper verification, and outbound PII/CI-secret redaction before cloud inference.
 
 ## Architecture & Engineering Standards
 
-- **Backend (`backend/`):** Python 3.12+, FastAPI, Pydantic v2, typed settings with production fail-fast validation, pure ASGI security-header middleware, and versioned `/api/v1/health` probes.
+- **Backend (`backend/`):** Python 3.12+, FastAPI, Pydantic v2, async SQLAlchemy 2.0 + Alembic migrations (`0001_initial_schema`), pure ASGI security-header middleware, and `/api/v1/health` (`/live`, `/ready`) probes.
 - **Frontend (`frontend/`):** React 18, TypeScript, Vite, Tailwind CSS, and Vitest + Testing Library unit tests served behind unprivileged Nginx in production.
-- **Privacy & AI Guardrails:** Offline deterministic `mock` mode for CI/dev, local-first open-weights Ollama support, and cloud PII-redaction switches enabled by default.
+- **Privacy & AI Guardrails:** Offline deterministic `mock` mode for CI/dev, local-first open-weights Ollama support, and cloud PII/secret redaction enabled by default (`LLM_REDACT_PII_FOR_CLOUD=true`).
 - **Containers & CI (`.github/workflows/ci.yml`):** Multi-stage Dockerfiles, PostgreSQL (`pgvector`) + Redis Compose topology, Ruff + Mypy + Pytest checks, TypeScript + Vitest + Vite build, `npm audit`, and Trivy filesystem scanning.
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the domain module plan.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the module and security architecture.
 
 ## Quickstart
 
@@ -29,6 +30,7 @@ cd backend
 python -m venv .venv
 source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
+alembic upgrade head
 uvicorn app.main:app --reload --port 8000
 ```
 

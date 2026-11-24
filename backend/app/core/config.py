@@ -24,16 +24,35 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:5173,http://localhost:3000"
 
     database_url: str = "sqlite+aiosqlite:///./ai_qa_release_engineer.db"
+    auto_create_tables: bool = True
+    seed_demo_data: bool = False
 
     llm_default_provider: Literal["mock", "ollama", "gemini"] = "mock"
     llm_fallback_providers: str = "ollama,gemini,mock"
+    ollama_base_url: str = "http://localhost:11434"
+    ollama_default_model: str = "llama-3.1-8b-instruct"
+    gemini_api_key: str = ""
+    gemini_default_model: str = "gemini-2.5-flash"
     llm_redact_pii_for_cloud: bool = True
 
+    flaky_min_runs: int = 3
+    flaky_pass_rate_floor: float = 0.2
+    flaky_pass_rate_ceiling: float = 0.9
+    regression_max_latency_drift_pct: float = 20.0
+    llm_eval_min_score: float = 0.85
+    canary_max_error_rate_pct: float = 1.0
+    canary_max_p95_latency_ms: float = 500.0
+
     auth_secret_key: str = _DEFAULT_DEV_SECRET
+    auth_require_token: bool = False
 
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def llm_fallback_list(self) -> list[str]:
+        return [p.strip().lower() for p in self.llm_fallback_providers.split(",") if p.strip()]
 
 
 @lru_cache(maxsize=1)
