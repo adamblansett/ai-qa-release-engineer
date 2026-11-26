@@ -2,14 +2,19 @@ import base64
 import hashlib
 import hmac
 import json
+import secrets
 import time
 from collections.abc import Callable
 from typing import Literal, cast
 
 from fastapi import Depends, HTTPException, Request, status
 from pydantic import BaseModel
+from sqlalchemy import select
 
 from app.core.config import Settings, get_settings
+from app.db.base import utcnow
+from app.db.models import ApiKey
+from app.db.session import ensure_db_initialized
 
 ActorRole = Literal["viewer", "qa_engineer", "release_manager", "admin"]
 VALID_ROLES: tuple[ActorRole, ...] = ("viewer", "qa_engineer", "release_manager", "admin")
@@ -21,6 +26,17 @@ class Actor(BaseModel):
     email: str
     role: ActorRole
     auth_method: str
+
+
+def hash_api_key(raw_key: str) -> str:
+    """Return SHA-256 hex digest for an API key."""
+    return hashlib.sha256(raw_key.strip().encode("utf-8")).hexdigest()
+
+
+def generate_api_key() -> tuple[str, str, str]:
+    """Generate a one-time API key tuple: (raw_key, key_prefix, key_hash)."""
+    raw_key = f"qa_live_{secrets.token_urlsafe(32)}"
+    return raw_key, raw_key[:16], hash_api_key(raw_key)
 
 
 def _b64url_encode(data: bytes) -> str:
@@ -107,7 +123,7 @@ def _resolve_settings(request: Request, settings: Settings | None = None) -> Set
 
 
 async def get_current_actor(request: Request) -> Actor:
-    """Resolve current actor from Bearer token or development actor headers."""
+    """Resolve current actor from Bearer token, X-API-Key, or dev actor headers."""
     settings = _resolve_settings(request)
     auth_header = request.headers.get("authorization", "").strip()
     if auth_header:
@@ -119,11 +135,44 @@ async def get_current_actor(request: Request) -> Actor:
         token = auth_header[7:].strip()
         return verify_access_token(token, settings.auth_secret_key)
 
+    api_key_raw = request.headers.get("x-api-key", "").strip()
+    if api_key_raw:
+        await ensure_db_initialized(request.app)
+        key_digest = hash_api_key(api_key_raw)
+        session_factory = request.app.state.session_factory
+        async with session_factory() as session:
+            key_row = (
+                await session.execute(
+                    select(ApiKey).where(
+                        ApiKey.key_hash == key_digest,
+                        ApiKey.revoked_at.is_(None),
+                    )
+                )
+            ).scalar_one_or_none()
+            if key_row is None:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid or revoked API key.",
+                )
+            key_row.last_used_at = utcnow()
+            await session.commit()
+            role_raw = key_row.role.strip().lower()
+            if role_raw not in VALID_ROLES:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="API key holds invalid role.",
+                )
+            return Actor(
+                email=key_row.owner_email,
+                role=cast(ActorRole, role_raw),
+                auth_method="api_key",
+            )
+
     is_prod = settings.app_env.strip().lower() == "production"
     if settings.auth_require_token or is_prod:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Bearer token authentication is required.",
+            detail="Bearer token or X-API-Key authentication is required.",
         )
 
     email = request.headers.get("x-actor-email", "release-manager@acme-qa.local").strip()

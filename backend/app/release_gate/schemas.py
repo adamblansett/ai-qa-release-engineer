@@ -44,6 +44,24 @@ class ReleaseEvaluateRequest(BaseModel):
     regression_run_id: str | None = None
 
 
+class TelemetryPullRequest(BaseModel):
+    source: Literal["simulated", "otel_snapshot", "prometheus"] = "otel_snapshot"
+    prometheus_url: str = Field(default="", max_length=500)
+    error_rate_query: str = Field(
+        default="sum(rate(http_requests_total{status=~'5..'}[5m]))",
+        max_length=500,
+    )
+    p95_latency_query: str = Field(
+        default="histogram_quantile(0.95, rate(http_request_duration_ms_bucket[5m]))",
+        max_length=500,
+    )
+    total_requests: int = Field(default=10000, ge=1)
+    error_requests: int = Field(default=12, ge=0)
+    p95_latency_ms: float = Field(default=145.0, ge=0.0)
+    simulated_error_rate_pct: float = Field(default=0.12, ge=0.0, le=100.0)
+    simulated_p95_latency_ms: float = Field(default=145.0, ge=0.0)
+
+
 class SmokeProbeOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

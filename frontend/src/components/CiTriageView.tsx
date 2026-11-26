@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { AlertTriangle, FileCheck2, Terminal } from 'lucide-react';
+import { AlertTriangle, FileCheck2, Layers, Terminal } from 'lucide-react';
 import { analyzeCiLog, auditWorkflowYaml } from '../api/client';
 import type {
   ActorContext,
   CiBuildRunItem,
   FlakyClusterItem,
+  SemanticClusterItem,
   WorkflowAuditItem,
 } from '../types/qa';
 import { StatusBadge } from './StatusBadge';
@@ -13,6 +14,7 @@ interface CiTriageViewProps {
   actor: ActorContext;
   runs: CiBuildRunItem[];
   flakyClusters: FlakyClusterItem[];
+  semanticClusters: SemanticClusterItem[];
   workflowAudits: WorkflowAuditItem[];
   onRefresh: () => Promise<void>;
   onNotify: (text: string, isError?: boolean) => void;
@@ -39,6 +41,7 @@ export function CiTriageView({
   actor,
   runs,
   flakyClusters,
+  semanticClusters,
   workflowAudits,
   onRefresh,
   onNotify,
@@ -245,6 +248,41 @@ export function CiTriageView({
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+      </section>
+
+      <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex items-center gap-2">
+          <Layers className="h-4 w-4 text-indigo-600" />
+          <h2 className="text-sm font-semibold text-slate-900">
+            Semantic Failure Clusters ({semanticClusters.length})
+          </h2>
+        </div>
+        {semanticClusters.length === 0 ? (
+          <p className="mt-3 text-xs text-slate-500">No failure clusters computed yet.</p>
+        ) : (
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            {semanticClusters.map((cl) => (
+              <div
+                key={cl.cluster_id}
+                className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <StatusBadge status={cl.root_cause_category} />
+                  <span className="font-semibold text-slate-700">
+                    {cl.run_count} run(s) · {Math.round(cl.avg_similarity * 100)}% sim
+                  </span>
+                </div>
+                <p className="mt-1.5 font-mono text-[11px] text-slate-900">
+                  {cl.representative_signature}
+                </p>
+                <p className="mt-1 text-slate-600">{cl.remediation_summary}</p>
+                <p className="mt-1 text-[11px] text-slate-500">
+                  Branches: {cl.branches.join(', ')}
+                </p>
+              </div>
+            ))}
           </div>
         )}
       </section>

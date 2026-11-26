@@ -1,11 +1,17 @@
 import type {
   ActorContext,
+  ActorRole,
+  ApiKeyCreateResponse,
+  ApiKeyItem,
   ApprovalRequestItem,
   AuditChainVerify,
   AuditEventItem,
+  BackgroundJobItem,
   CiBuildRunItem,
   FlakyClusterItem,
   FlowStepInput,
+  GitHubCheckPublishResponse,
+  GitHubWebhookResponse,
   HealthStatus,
   OverviewSummary,
   PiiRedactResult,
@@ -13,7 +19,9 @@ import type {
   RegressionRunItem,
   ReleaseCandidateItem,
   SeedSummary,
+  SemanticClusterItem,
   TestSuiteItem,
+  TokenIssueResponse,
   WorkflowAuditItem,
 } from '../types/qa';
 
@@ -33,8 +41,14 @@ async function requestJson<T>(
   init: RequestInit = {},
 ): Promise<T> {
   const headers = new Headers(init.headers);
-  headers.set('X-Actor-Email', actor.email);
-  headers.set('X-Actor-Role', actor.role);
+  if (actor.authMode === 'bearer_token' && actor.token) {
+    headers.set('Authorization', `Bearer ${actor.token}`);
+  } else if (actor.authMode === 'api_key' && actor.apiKey) {
+    headers.set('X-API-Key', actor.apiKey);
+  } else {
+    headers.set('X-Actor-Email', actor.email);
+    headers.set('X-Actor-Role', actor.role);
+  }
   if (init.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
@@ -334,5 +348,142 @@ export function redactPiiText(actor: ActorContext, text: string): Promise<PiiRed
   return requestJson<PiiRedactResult>('/api/v1/audit/pii/redact', actor, {
     method: 'POST',
     body: JSON.stringify({ text }),
+  });
+}
+
+// --- Phase 2: Auth Tokens, API Keys, Reports, Semantic Clusters, Integrations, Jobs ---
+
+export async function issueDevToken(
+  email: string,
+  role: ActorRole,
+): Promise<TokenIssueResponse> {
+  const response = await fetch('/api/v1/auth/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, role }),
+  });
+  if (!response.ok) {
+    throw new ApiClientError('Token issuance failed', response.status);
+  }
+  return (await response.json()) as TokenIssueResponse;
+}
+
+export function fetchApiKeys(actor: ActorContext): Promise<ApiKeyItem[]> {
+  return requestJson<ApiKeyItem[]>('/api/v1/auth/api-keys', actor);
+}
+
+export function createApiKey(
+  actor: ActorContext,
+  payload: { name: string; role: ActorRole; owner_email: string },
+): Promise<ApiKeyCreateResponse> {
+  return requestJson<ApiKeyCreateResponse>('/api/v1/auth/api-keys', actor, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function revokeApiKey(actor: ActorContext, keyId: string): Promise<ApiKeyItem> {
+  return requestJson<ApiKeyItem>(`/api/v1/auth/api-keys/${keyId}`, actor, {
+    method: 'DELETE',
+  });
+}
+
+export function fetchSemanticClusters(actor: ActorContext): Promise<SemanticClusterItem[]> {
+  return requestJson<SemanticClusterItem[]>('/api/v1/ci-triage/semantic-clusters', actor);
+}
+
+export function ingestTestReport(
+  actor: ActorContext,
+  payload: {
+    pipeline_name: string;
+    branch: string;
+    commit_sha: string;
+    job_name: string;
+    report_format: 'junit_xml' | 'playwright_json';
+    content: string;
+  },
+): Promise<CiBuildRunItem> {
+  return requestJson<CiBuildRunItem>('/api/v1/ci-triage/ingest-report', actor, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function pullReleaseTelemetry(
+  actor: ActorContext,
+  releaseId: string,
+  payload: {
+    source: 'simulated' | 'otel_snapshot' | 'prometheus';
+    total_requests?: number;
+    error_requests?: number;
+    p95_latency_ms?: number;
+    simulated_error_rate_pct?: number;
+    simulated_p95_latency_ms?: number;
+    prometheus_url?: string;
+  },
+): Promise<ReleaseCandidateItem> {
+  return requestJson<ReleaseCandidateItem>(
+    `/api/v1/release-gate/releases/${releaseId}/telemetry/pull`,
+    actor,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export function fetchJobs(actor: ActorContext): Promise<BackgroundJobItem[]> {
+  return requestJson<BackgroundJobItem[]>('/api/v1/jobs', actor);
+}
+
+export function enqueueJob(
+  actor: ActorContext,
+  payload: {
+    job_type: 'canary_smoke_sweep' | 'embedding_reindex' | 'regression_suite_run';
+    payload_json?: Record<string, unknown>;
+  },
+): Promise<BackgroundJobItem> {
+  return requestJson<BackgroundJobItem>('/api/v1/jobs/enqueue', actor, {
+    method: 'POST',
+    body: JSON.stringify({
+      job_type: payload.job_type,
+      payload_json: payload.payload_json || {},
+    }),
+  });
+}
+
+export function dispatchGitHubWebhook(
+  event: 'workflow_run' | 'deployment_status' | 'ping',
+  payload: Record<string, unknown>,
+): Promise<GitHubWebhookResponse> {
+  return fetch('/api/v1/integrations/github/webhook', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-GitHub-Event': event,
+    },
+    body: JSON.stringify(payload),
+  }).then(async (res) => {
+    if (!res.ok) {
+      throw new ApiClientError('Webhook dispatch failed', res.status);
+    }
+    return (await res.json()) as GitHubWebhookResponse;
+  });
+}
+
+export function publishGitHubCheck(
+  actor: ActorContext,
+  payload: {
+    repository: string;
+    head_sha: string;
+    release_id?: string | null;
+    ci_run_id?: string | null;
+    check_name?: string;
+    dry_run?: boolean;
+  },
+): Promise<GitHubCheckPublishResponse> {
+  return requestJson<GitHubCheckPublishResponse>('/api/v1/integrations/github/publish-check', actor, {
+    method: 'POST',
+    body: JSON.stringify(payload),
   });
 }

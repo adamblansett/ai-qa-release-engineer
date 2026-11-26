@@ -2,15 +2,17 @@
 
 > Open-source, self-hosted AI QA and release engineering platform for E2E test generation, CI/CD health checks, regression execution, and deployment verification.
 
-**Roadmap Stage:** Phase 2 — Administrative, Quality & Specialized Additions · **Status:** Phase 1 Core Platform Implemented
+**Roadmap Stage:** Phase 2 — Administrative, Quality & Specialized Additions · **Status:** Phase 2 Integrations & Production Hardening Implemented
 
 ## Core Capabilities
 
 - **E2E Test Generation (`/api/v1/testgen`):** OpenAPI 3.x YAML/JSON and user-flow test synthesis producing runnable Playwright TypeScript and `pytest` + `httpx` suites with schema assertions, negative validation cases, auth guards, and HITL publish approvals.
-- **CI/CD Health Checks (`/api/v1/ci-triage`):** Deterministic log parser & root-cause classifier (`infra_oom`, `timeout`, `dependency_error`, `lint_type_error`, `assertion_failure`), flaky-test transition clustering, and GitHub Actions YAML security/reliability auditing (`WF001`–`WF008`).
+- **CI/CD Health Checks & Semantic Triage (`/api/v1/ci-triage`):** Deterministic log parser & root-cause classifier (`infra_oom`, `timeout`, `dependency_error`, `lint_type_error`, `assertion_failure`), JUnit XML & Playwright JSON report ingestion, embedding-based semantic failure clustering, flaky-test transition clustering, and GitHub Actions YAML auditing (`WF001`–`WF008`).
 - **Regression Execution (`/api/v1/regression`):** Contract compatibility diffing, recursive JSON snapshot diffs, deterministic LLM-eval rubric scoring with PII leak penalties, p95 latency drift checks, and HITL baseline promotion.
-- **Deployment Verification (`/api/v1/release-gate`):** SSRF-guarded post-deploy smoke probes, 6-gate Go/No-Go readiness checklist, canary SLO enforcement, and HITL promotion & emergency rollback execution.
-- **Governance, RBAC & Guardrails (`/api/v1/audit`, `/api/v1/auth`):** Roles (`viewer`, `qa_engineer`, `release_manager`, `admin`), HMAC-SHA256 Bearer tokens, SHA-256 hash-chained audit trail with tamper verification, and outbound PII/CI-secret redaction before cloud inference.
+- **Deployment Verification (`/api/v1/release-gate`):** SSRF-guarded post-deploy smoke probes, OTel/Prometheus canary telemetry pull, 6-gate Go/No-Go readiness checklist, and HITL promotion & emergency rollback execution.
+- **Webhooks, Worker Queue & Hardening (`/api/v1/integrations`, `/api/v1/jobs`, `/api/v1/auth`, `/api/v1/metrics`):** HMAC-SHA256 GitHub webhooks & PR check-run publisher, inline/Redis background job runner (`python -m app.jobs.worker`), scoped `X-API-Key` + Bearer JWT RBAC, sliding-window rate limiting, Prometheus metrics, SHA-256 audit chain, and outbound PII/CI-secret redaction.
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for architecture and production deployment details.
 
 ## Architecture & Engineering Standards
 

@@ -5,10 +5,12 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.v1.metrics import router as metrics_router
 from app.api.v1.router import api_v1_router
 from app.core.auth import Actor
 from app.core.config import Settings, get_settings, validate_production_security
-from app.core.middleware import SecurityHeadersMiddleware
+from app.core.middleware import RateLimitMiddleware, SecurityHeadersMiddleware
+from app.core.observability import MetricsRegistry
 from app.db.session import build_engine, build_session_factory, ensure_db_initialized
 from app.llm.router import LLMRouter
 from app.seed.demo_data import seed_demo_dataset
@@ -61,6 +63,7 @@ def create_app(settings_override: Settings | None = None) -> FastAPI:
     application.state.db_init_lock = asyncio.Lock()
     application.state.db_initialized = False
     application.state.llm_router = LLMRouter(cfg)
+    application.state.metrics = MetricsRegistry(service_name=cfg.otel_service_name)
 
     application.add_middleware(
         CORSMiddleware,
@@ -69,8 +72,10 @@ def create_app(settings_override: Settings | None = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    application.add_middleware(RateLimitMiddleware, settings=cfg)
     application.add_middleware(SecurityHeadersMiddleware, settings=cfg)
     application.include_router(api_v1_router, prefix=cfg.api_v1_prefix)
+    application.include_router(metrics_router)
     return application
 
 

@@ -26,7 +26,9 @@ from app.release_gate.schemas import (
     ReleaseCandidateOut,
     ReleaseEvaluateRequest,
     SmokeProbeBatchRequest,
+    TelemetryPullRequest,
 )
+from app.release_gate.telemetry import pull_canary_telemetry
 
 router = APIRouter(prefix="/release-gate", tags=["release-gate"])
 
@@ -293,6 +295,54 @@ async def evaluate_release(
         details={
             "version_tag": release.version_tag,
             "readiness_score": release.readiness_score,
+            "decision": release.decision,
+        },
+    )
+    await db.commit()
+    return await _load_release(db, release.id)
+
+
+@router.post("/releases/{release_id}/telemetry/pull", response_model=ReleaseCandidateOut)
+async def pull_release_telemetry(
+    release_id: str,
+    payload: TelemetryPullRequest,
+    request: Request,
+    actor: Actor = Depends(require_roles("qa_engineer", "release_manager", "admin")),
+    db: AsyncSession = Depends(get_db),
+    llm_router: LLMRouter = Depends(get_llm_router),
+) -> ReleaseCandidate:
+    """Pull canary error rate and p95 latency from OTel/Prometheus and re-evaluate release."""
+    settings = _resolve_settings(request)
+    release = await _load_release(db, release_id)
+
+    try:
+        error_rate_pct, p95_latency_ms = await pull_canary_telemetry(payload)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Telemetry pull failed: {exc}",
+        ) from exc
+
+    release.canary_error_rate_pct = error_rate_pct
+    release.canary_p95_latency_ms = p95_latency_ms
+    await _refresh_readiness(db, release, settings, llm_router)
+    await record_audit_event(
+        db,
+        event_type="release.telemetry_pulled",
+        actor=actor,
+        entity_type="release_candidate",
+        entity_id=release.id,
+        action=f"pull_{payload.source}",
+        details={
+            "version_tag": release.version_tag,
+            "source": payload.source,
+            "canary_error_rate_pct": error_rate_pct,
+            "canary_p95_latency_ms": p95_latency_ms,
             "decision": release.decision,
         },
     )

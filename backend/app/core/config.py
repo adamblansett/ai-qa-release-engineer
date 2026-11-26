@@ -46,6 +46,20 @@ class Settings(BaseSettings):
     auth_secret_key: str = _DEFAULT_DEV_SECRET
     auth_require_token: bool = False
 
+    redis_url: str = "redis://redis:6379/0"
+    task_execution_mode: Literal["inline", "redis"] = "inline"
+    embedding_provider: Literal["deterministic", "ollama"] = "deterministic"
+    embedding_dimensions: int = 384
+
+    github_webhook_secret: str = ""
+    github_token: str = ""
+    github_api_base_url: str = "https://api.github.com"
+
+    rate_limit_enabled: bool = True
+    rate_limit_requests_per_minute: int = 120
+    otel_enabled: bool = False
+    otel_service_name: str = "ai-qa-release-engineer"
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]

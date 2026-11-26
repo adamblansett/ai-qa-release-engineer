@@ -1,7 +1,18 @@
 import { useState } from 'react';
-import { CheckCircle2, Play, Rocket, RotateCcw, ShieldAlert, XCircle } from 'lucide-react';
+import {
+  Activity,
+  CheckCircle2,
+  Cpu,
+  Play,
+  Rocket,
+  RotateCcw,
+  ShieldAlert,
+  XCircle,
+} from 'lucide-react';
 import {
   createReleaseCandidate,
+  enqueueJob,
+  pullReleaseTelemetry,
   requestReleasePromotion,
   requestReleaseRollback,
   runSmokeProbes,
@@ -114,6 +125,42 @@ export function ReleaseGateView({
       await onRefresh();
     } catch (err) {
       onNotify(err instanceof Error ? err.message : 'Rollback request failed', true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handlePullTelemetry(releaseId: string) {
+    setBusy(true);
+    try {
+      const updated = await pullReleaseTelemetry(actor, releaseId, {
+        source: 'otel_snapshot',
+        total_requests: 10000,
+        error_requests: 10,
+        p95_latency_ms: 142,
+      });
+      onNotify(
+        `Pulled OTel telemetry for ${updated.version_tag}: ${updated.canary_error_rate_pct}% err, ${updated.canary_p95_latency_ms}ms p95.`,
+      );
+      await onRefresh();
+    } catch (err) {
+      onNotify(err instanceof Error ? err.message : 'Telemetry pull failed', true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleQueueSmokeSweep(releaseId: string) {
+    setBusy(true);
+    try {
+      const job = await enqueueJob(actor, {
+        job_type: 'canary_smoke_sweep',
+        payload_json: { release_id: releaseId },
+      });
+      onNotify(`Canary smoke sweep job ${job.status} (${job.execution_mode}).`);
+      await onRefresh();
+    } catch (err) {
+      onNotify(err instanceof Error ? err.message : 'Smoke sweep enqueue failed', true);
     } finally {
       setBusy(false);
     }
@@ -281,7 +328,29 @@ export function ReleaseGateView({
                 </button>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                {canMutate && (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => handlePullTelemetry(rel.id)}
+                    className="inline-flex items-center gap-1 rounded-md border border-indigo-200 bg-indigo-50 px-2.5 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 disabled:opacity-50"
+                  >
+                    <Activity className="h-3.5 w-3.5" />
+                    Pull OTel Telemetry
+                  </button>
+                )}
+                {canMutate && (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => handleQueueSmokeSweep(rel.id)}
+                    className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+                  >
+                    <Cpu className="h-3.5 w-3.5" />
+                    Queue Smoke Sweep
+                  </button>
+                )}
                 {canMutate && !rel.approval_id && rel.status !== 'rolled_back' && (
                   <button
                     type="button"

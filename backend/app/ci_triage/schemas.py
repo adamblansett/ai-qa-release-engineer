@@ -23,6 +23,16 @@ class CiLogAnalyzeRequest(BaseModel):
     test_records: list[TestExecutionInput] = Field(default_factory=list)
 
 
+class ReportIngestRequest(BaseModel):
+    pipeline_name: str = Field(min_length=1, max_length=160)
+    branch: str = Field(default="main", min_length=1, max_length=120)
+    commit_sha: str = Field(min_length=4, max_length=64)
+    job_name: str = Field(min_length=1, max_length=160)
+    report_format: Literal["junit_xml", "playwright_json"]
+    content: str = Field(min_length=5, max_length=500000)
+    duration_seconds: float = Field(default=0.0, ge=0.0)
+
+
 class CiBuildRunOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -54,6 +64,28 @@ class FlakyClusterOut(BaseModel):
     is_flaky: bool
     dominant_error_signature: str
     recommendation: str
+
+
+class SimilarFailureOut(BaseModel):
+    run_id: str
+    pipeline_name: str
+    branch: str
+    commit_sha: str
+    root_cause_category: str
+    failure_signature: str
+    remediation_summary: str
+    similarity_score: float
+
+
+class SemanticClusterOut(BaseModel):
+    cluster_id: str
+    root_cause_category: str
+    representative_signature: str
+    run_count: int
+    avg_similarity: float
+    run_ids: list[str]
+    branches: list[str]
+    remediation_summary: str
 
 
 class WorkflowAuditRequest(BaseModel):

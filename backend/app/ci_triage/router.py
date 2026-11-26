@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,10 +9,20 @@ from app.ci_triage.analyzer import (
     normalize_signature,
     parse_ci_log,
 )
+from app.ci_triage.embeddings import (
+    build_failure_embedding_text,
+    cluster_semantic_failures,
+    find_similar_failures,
+    generate_embedding,
+)
+from app.ci_triage.report_parser import parse_junit_xml, parse_playwright_json
 from app.ci_triage.schemas import (
     CiBuildRunOut,
     CiLogAnalyzeRequest,
     FlakyClusterOut,
+    ReportIngestRequest,
+    SemanticClusterOut,
+    SimilarFailureOut,
     WorkflowAuditOut,
     WorkflowAuditRequest,
 )
@@ -31,25 +41,16 @@ def _resolve_settings(request: Request) -> Settings:
     return cfg if isinstance(cfg, Settings) else get_settings()
 
 
-@router.get("/runs", response_model=list[CiBuildRunOut])
-async def list_ci_runs(
-    actor: Actor = Depends(get_current_actor),
-    db: AsyncSession = Depends(get_db),
-) -> list[CiBuildRun]:
-    """List analyzed CI build runs newest first."""
-    _ = actor
-    stmt = select(CiBuildRun).order_by(CiBuildRun.created_at.desc())
-    return list((await db.execute(stmt)).scalars().all())
-
-
-@router.post("/analyze", response_model=CiBuildRunOut, status_code=status.HTTP_201_CREATED)
-async def analyze_ci_run(
+async def persist_ci_analysis(
+    db: AsyncSession,
+    *,
     payload: CiLogAnalyzeRequest,
-    actor: Actor = Depends(require_roles("qa_engineer", "release_manager", "admin")),
-    db: AsyncSession = Depends(get_db),
-    llm_router: LLMRouter = Depends(get_llm_router),
+    actor: Actor,
+    settings: Settings,
+    llm_router: LLMRouter,
+    event_type: str = "ci.analyzed",
 ) -> CiBuildRun:
-    """Parse CI build logs, classify root cause, and persist test execution outcomes."""
+    """Analyze CI log/records, compute embedding vector, persist, and record audit event."""
     extracted_errors, parsed_tests = parse_ci_log(payload.raw_log)
     resolved_status, category, signature, confidence, remediation = classify_root_cause(
         raw_log=payload.raw_log,
@@ -67,6 +68,14 @@ async def analyze_ci_run(
         task_type="ci_triage",
     )
 
+    embed_text = build_failure_embedding_text(
+        category=category,
+        signature=signature,
+        raw_log=payload.raw_log,
+        job_name=payload.job_name,
+    )
+    embedding = await generate_embedding(embed_text, settings)
+
     run = CiBuildRun(
         pipeline_name=payload.pipeline_name.strip(),
         branch=payload.branch.strip(),
@@ -81,6 +90,7 @@ async def analyze_ci_run(
         remediation_summary=remediation,
         ai_explanation=llm_resp.content,
         extracted_errors_json=extracted_errors,
+        embedding_json=embedding,
     )
     db.add(run)
     await db.flush()
@@ -106,7 +116,7 @@ async def analyze_ci_run(
 
     await record_audit_event(
         db,
-        event_type="ci.analyzed",
+        event_type=event_type,
         actor=actor,
         entity_type="ci_build_run",
         entity_id=run.id,
@@ -121,6 +131,107 @@ async def analyze_ci_run(
     await db.commit()
     await db.refresh(run)
     return run
+
+
+@router.get("/runs", response_model=list[CiBuildRunOut])
+async def list_ci_runs(
+    actor: Actor = Depends(get_current_actor),
+    db: AsyncSession = Depends(get_db),
+) -> list[CiBuildRun]:
+    """List analyzed CI build runs newest first."""
+    _ = actor
+    stmt = select(CiBuildRun).order_by(CiBuildRun.created_at.desc())
+    return list((await db.execute(stmt)).scalars().all())
+
+
+@router.post("/analyze", response_model=CiBuildRunOut, status_code=status.HTTP_201_CREATED)
+async def analyze_ci_run(
+    payload: CiLogAnalyzeRequest,
+    request: Request,
+    actor: Actor = Depends(require_roles("qa_engineer", "release_manager", "admin")),
+    db: AsyncSession = Depends(get_db),
+    llm_router: LLMRouter = Depends(get_llm_router),
+) -> CiBuildRun:
+    """Parse CI build logs, classify root cause, embed failure, and persist test outcomes."""
+    return await persist_ci_analysis(
+        db,
+        payload=payload,
+        actor=actor,
+        settings=_resolve_settings(request),
+        llm_router=llm_router,
+    )
+
+
+@router.post("/ingest-report", response_model=CiBuildRunOut, status_code=status.HTTP_201_CREATED)
+async def ingest_test_report(
+    payload: ReportIngestRequest,
+    request: Request,
+    actor: Actor = Depends(require_roles("qa_engineer", "release_manager", "admin")),
+    db: AsyncSession = Depends(get_db),
+    llm_router: LLMRouter = Depends(get_llm_router),
+) -> CiBuildRun:
+    """Ingest JUnit XML or Playwright JSON test reports into CI triage & flaky tracking."""
+    try:
+        if payload.report_format == "junit_xml":
+            test_records, summary_log = parse_junit_xml(payload.content)
+        else:
+            test_records, summary_log = parse_playwright_json(payload.content)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid {payload.report_format} report: {exc}",
+        ) from exc
+
+    has_failures = any(r.outcome == "failed" for r in test_records)
+    analyze_req = CiLogAnalyzeRequest(
+        pipeline_name=payload.pipeline_name,
+        branch=payload.branch,
+        commit_sha=payload.commit_sha,
+        job_name=payload.job_name,
+        status="failed" if has_failures else "passed",
+        duration_seconds=payload.duration_seconds,
+        raw_log=summary_log,
+        test_records=test_records,
+    )
+    return await persist_ci_analysis(
+        db,
+        payload=analyze_req,
+        actor=actor,
+        settings=_resolve_settings(request),
+        llm_router=llm_router,
+        event_type="ci.report_ingested",
+    )
+
+
+@router.get("/runs/{run_id}/similar", response_model=list[SimilarFailureOut])
+async def get_similar_failures(
+    run_id: str,
+    limit: int = Query(default=5, ge=1, le=20),
+    actor: Actor = Depends(get_current_actor),
+    db: AsyncSession = Depends(get_db),
+) -> list[SimilarFailureOut]:
+    """Return semantically similar historical CI failures ordered by cosine similarity."""
+    _ = actor
+    target = await db.get(CiBuildRun, run_id)
+    if target is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"CI build run '{run_id}' not found.",
+        )
+    all_runs = list((await db.execute(select(CiBuildRun))).scalars().all())
+    return find_similar_failures(target, all_runs, limit=limit)
+
+
+@router.get("/semantic-clusters", response_model=list[SemanticClusterOut])
+async def list_semantic_clusters(
+    threshold: float = Query(default=0.45, ge=0.1, le=0.99),
+    actor: Actor = Depends(get_current_actor),
+    db: AsyncSession = Depends(get_db),
+) -> list[SemanticClusterOut]:
+    """Group failed CI runs by embedding cosine similarity for incident deduplication."""
+    _ = actor
+    all_runs = list((await db.execute(select(CiBuildRun))).scalars().all())
+    return cluster_semantic_failures(all_runs, threshold=threshold)
 
 
 @router.get("/flaky-clusters", response_model=list[FlakyClusterOut])

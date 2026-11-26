@@ -29,9 +29,16 @@ The Phase 1 implementation ships an end-to-end backend (`FastAPI` + async `SQLAl
    - Enforces HITL `release_promotion` and `rollback_execution` approvals via `release_manager` or `admin` roles.
 
 5. **`audit/` & `llm/`** — Governance, RBAC & Outbound Secret Scrubbing
-   - Role-based access control (`viewer`, `qa_engineer`, `release_manager`, `admin`) via HMAC-SHA256 Bearer JWT or dev actor headers (`AUTH_REQUIRE_TOKEN=true` / `APP_ENV=production` enforces Bearer tokens).
+   - Role-based access control (`viewer`, `qa_engineer`, `release_manager`, `admin`) via HMAC-SHA256 Bearer JWT, scoped `X-API-Key` credentials (`api_keys`), or dev actor headers (`AUTH_REQUIRE_TOKEN=true` / `APP_ENV=production` enforces Bearer JWT or API key).
    - `redact_pii()` scrubs PEM private keys, credentialed DB URIs, JWTs, Bearer tokens, GitHub/AWS/Gemini/OpenAI keys, secret assignments, SSNs, emails, phones, and Luhn-valid card numbers before outbound cloud calls (`LLM_REDACT_PII_FOR_CLOUD=true`).
    - Every mutation appends to `audit_events` with a SHA-256 chain verifiable via `GET /api/v1/audit/events/verify`.
+
+6. **`integrations/` & `jobs/`** — Live CI/CD Webhooks, Telemetry Pull & Worker Queue
+   - `POST /api/v1/integrations/github/webhook` verifies `X-Hub-Signature-256` HMAC digests and auto-ingests `workflow_run` & `deployment_status` events; `POST /api/v1/integrations/github/publish-check` formats and posts PR Check Runs.
+   - `POST /api/v1/ci-triage/ingest-report` parses XXE-safe JUnit XML and Playwright JSON reports; `embeddings.py` groups failures into semantic clusters.
+   - `POST /api/v1/release-gate/releases/{id}/telemetry/pull` fetches SSRF-guarded Prometheus or OTel snapshot metrics.
+   - `jobs/` executes `canary_smoke_sweep`, `embedding_reindex`, and `regression_suite_run` inline or via Redis `qa:jobs:queue` (`python -m app.jobs.worker`).
+   - `RateLimitMiddleware` enforces sliding-window per-client limits (`429` + `Retry-After`) and `GET /api/v1/metrics` / `/metrics` emits Prometheus metrics alongside `X-Trace-Id` headers when `OTEL_ENABLED=true`.
 
 ## Security & Operational Invariants
 

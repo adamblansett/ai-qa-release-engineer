@@ -7,6 +7,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit.service import create_approval_request, record_audit_event
 from app.ci_triage.analyzer import classify_root_cause, normalize_signature, parse_ci_log
+from app.ci_triage.embeddings import (
+    build_failure_embedding_text,
+    compute_deterministic_embedding,
+)
 from app.ci_triage.workflow_validator import validate_workflow_yaml
 from app.core.auth import Actor
 from app.core.config import Settings
@@ -14,6 +18,7 @@ from app.db.base import utcnow
 from app.db.models import (
     ApprovalRequest,
     AuditEvent,
+    BackgroundJob,
     CiBuildRun,
     GeneratedTestCase,
     RegressionBaseline,
@@ -130,6 +135,7 @@ jobs:
 
 async def _clear_all_tables(db: AsyncSession) -> None:
     for model in (
+        BackgroundJob,
         SmokeProbeResult,
         ReleaseCandidate,
         RegressionRun,
@@ -402,6 +408,12 @@ async def seed_demo_dataset(
             status_hint=spec["status"],
             extracted_errors=extracted,
         )
+        embed_text = build_failure_embedding_text(
+            category=cat,
+            signature=sig,
+            raw_log=spec["log"],
+            job_name=spec["job"],
+        )
         run_obj = CiBuildRun(
             pipeline_name=spec["pipeline"],
             branch=spec["branch"],
@@ -416,6 +428,9 @@ async def seed_demo_dataset(
             remediation_summary=rem,
             ai_explanation=f"Deterministic triage: classified as {cat} ({sig[:120]}).",
             extracted_errors_json=extracted,
+            embedding_json=compute_deterministic_embedding(
+                embed_text, dimensions=settings.embedding_dimensions
+            ),
             created_at=base_time + timedelta(minutes=30 + idx * 10),
         )
         db.add(run_obj)
@@ -788,6 +803,20 @@ async def seed_demo_dataset(
         requested_by="qa.engineer@acme-qa.local",
     )
     rel_nogo.rollback_approval_id = rb_approval.id
+
+    db.add(
+        BackgroundJob(
+            job_type="embedding_reindex",
+            execution_mode="inline",
+            status="completed",
+            payload_json={},
+            result_json={"reindexed_runs": len(ci_specs)},
+            requested_by=actor.email,
+            created_at=base_time + timedelta(hours=5),
+            started_at=base_time + timedelta(hours=5),
+            completed_at=base_time + timedelta(hours=5, seconds=1),
+        )
+    )
 
     await record_audit_event(
         db,

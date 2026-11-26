@@ -1,8 +1,38 @@
 export type ActorRole = 'viewer' | 'qa_engineer' | 'release_manager' | 'admin';
+export type AuthMode = 'dev_header' | 'bearer_token' | 'api_key';
 
 export interface ActorContext {
   email: string;
   role: ActorRole;
+  authMode: AuthMode;
+  token?: string;
+  apiKey?: string;
+}
+
+export interface ApiKeyItem {
+  id: string;
+  name: string;
+  key_prefix: string;
+  role: string;
+  owner_email: string;
+  created_by: string;
+  created_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+}
+
+export interface ApiKeyCreateResponse extends ApiKeyItem {
+  raw_key: string;
+}
+
+export interface TokenIssueResponse {
+  access_token: string;
+  token_type: string;
+  actor: {
+    email: string;
+    role: ActorRole;
+    auth_method: string;
+  };
 }
 
 export interface HealthStatus {
@@ -295,4 +325,49 @@ export interface PiiRedactResult {
   redacted_text: string;
   findings: RedactionFinding[];
   total_redactions: number;
+}
+
+export interface SemanticClusterItem {
+  cluster_id: string;
+  root_cause_category: string;
+  representative_signature: string;
+  run_count: number;
+  avg_similarity: number;
+  run_ids: string[];
+  branches: string[];
+  remediation_summary: string;
+}
+
+export interface BackgroundJobItem {
+  id: string;
+  job_type: string;
+  execution_mode: string;
+  status: string;
+  payload_json: Record<string, unknown>;
+  result_json: Record<string, unknown>;
+  error_message: string;
+  requested_by: string;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+export interface GitHubWebhookResponse {
+  accepted: boolean;
+  event: string;
+  action_taken: string;
+  created_ci_run_id: string | null;
+  linked_release_id: string | null;
+}
+
+export interface GitHubCheckPublishResponse {
+  published: boolean;
+  mode: 'dry_run' | 'github_api';
+  repository: string;
+  head_sha: string;
+  conclusion: 'success' | 'failure' | 'action_required';
+  title: string;
+  summary_markdown: string;
+  external_url: string | null;
+  api_response: Record<string, unknown>;
 }

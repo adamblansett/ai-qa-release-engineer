@@ -75,17 +75,23 @@ def test_alembic_initial_migration_creates_all_tables(tmp_path: Path) -> None:
     alembic_cfg.set_main_option("sqlalchemy.url", db_url)
     command.upgrade(alembic_cfg, "head")
 
-    async def _list_tables() -> set[str]:
+    async def _inspect_schema() -> tuple[set[str], set[str]]:
         engine = build_engine(db_url)
         try:
             async with engine.connect() as conn:
                 return await conn.run_sync(
-                    lambda sync_conn: set(inspect(sync_conn).get_table_names())
+                    lambda sync_conn: (
+                        set(inspect(sync_conn).get_table_names()),
+                        {
+                            col["name"]
+                            for col in inspect(sync_conn).get_columns("ci_build_runs")
+                        },
+                    )
                 )
         finally:
             await engine.dispose()
 
-    tables = asyncio.run(_list_tables())
+    tables, ci_columns = asyncio.run(_inspect_schema())
     expected = {
         "audit_events",
         "approval_requests",
@@ -98,6 +104,9 @@ def test_alembic_initial_migration_creates_all_tables(tmp_path: Path) -> None:
         "regression_runs",
         "release_candidates",
         "smoke_probe_results",
+        "api_keys",
+        "background_jobs",
         "alembic_version",
     }
     assert expected <= tables
+    assert "embedding_json" in ci_columns

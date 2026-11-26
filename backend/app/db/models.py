@@ -141,6 +141,9 @@ class CiBuildRun(Base):
     extracted_errors_json: Mapped[list[dict[str, Any]]] = mapped_column(
         JSON, nullable=False, default=list
     )
+    embedding_json: Mapped[list[float]] = mapped_column(
+        JSON, nullable=False, default=list
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
     )
@@ -346,3 +349,51 @@ class SmokeProbeResult(Base):
     )
 
     release: Mapped[ReleaseCandidate] = relationship(back_populates="smoke_probes")
+
+
+class ApiKey(Base):
+    """Hashed API key for headless CI/CD pipelines and production automation."""
+
+    __tablename__ = "api_keys"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    key_prefix: Mapped[str] = mapped_column(String(24), index=True, nullable=False)
+    key_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    role: Mapped[str] = mapped_column(String(40), nullable=False)
+    owner_email: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+    last_used_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class BackgroundJob(Base):
+    """Asynchronous or inline QA & release verification background job."""
+
+    __tablename__ = "background_jobs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    job_type: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    execution_mode: Mapped[str] = mapped_column(String(24), nullable=False, default="inline")
+    status: Mapped[str] = mapped_column(String(24), index=True, nullable=False, default="queued")
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    result_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    error_message: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    requested_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+

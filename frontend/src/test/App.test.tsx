@@ -275,6 +275,95 @@ function createMockFetch() {
         }),
       };
     }
+    if (url.endsWith('/api/v1/ci-triage/semantic-clusters')) {
+      return {
+        ok: true,
+        json: async () => [
+          {
+            cluster_id: 'cluster-1',
+            root_cause_category: 'timeout',
+            representative_signature: 'TimeoutError: waiting for redis lock',
+            run_count: 2,
+            avg_similarity: 0.91,
+            run_ids: ['ci-1'],
+            branches: ['main', 'feat/promo-stack'],
+            remediation_summary: 'Replace fixed sleeps with readiness assertions.',
+          },
+        ],
+      };
+    }
+    if (url.endsWith('/api/v1/jobs')) {
+      return {
+        ok: true,
+        json: async () => [
+          {
+            id: 'job-1',
+            job_type: 'embedding_reindex',
+            execution_mode: 'inline',
+            status: 'completed',
+            payload_json: {},
+            result_json: { reindexed_runs: 6 },
+            error_message: '',
+            requested_by: 'release-manager@acme-qa.local',
+            created_at: '2026-11-26T07:00:00Z',
+            started_at: '2026-11-26T07:00:00Z',
+            completed_at: '2026-11-26T07:00:01Z',
+          },
+        ],
+      };
+    }
+    if (url.endsWith('/api/v1/jobs/enqueue') && init?.method === 'POST') {
+      return {
+        ok: true,
+        json: async () => ({
+          id: 'job-2',
+          job_type: 'embedding_reindex',
+          execution_mode: 'inline',
+          status: 'completed',
+          payload_json: {},
+          result_json: { reindexed_runs: 6 },
+          error_message: '',
+          requested_by: 'release-manager@acme-qa.local',
+          created_at: '2026-11-26T07:05:00Z',
+          started_at: '2026-11-26T07:05:00Z',
+          completed_at: '2026-11-26T07:05:01Z',
+        }),
+      };
+    }
+    if (url.endsWith('/api/v1/auth/api-keys') && (!init?.method || init.method === 'GET')) {
+      return { ok: true, json: async () => [] };
+    }
+    if (url.endsWith('/api/v1/auth/api-keys') && init?.method === 'POST') {
+      return {
+        ok: true,
+        json: async () => ({
+          id: 'key-1',
+          name: 'github-actions-runner',
+          key_prefix: 'qa_live_test123',
+          role: 'qa_engineer',
+          owner_email: 'ci-bot@acme-qa.local',
+          created_by: 'release-manager@acme-qa.local',
+          created_at: '2026-11-26T07:05:00Z',
+          last_used_at: null,
+          revoked_at: null,
+          raw_key: 'qa_live_test123_secret_value',
+        }),
+      };
+    }
+    if (url.endsWith('/api/v1/auth/token') && init?.method === 'POST') {
+      return {
+        ok: true,
+        json: async () => ({
+          access_token: 'hdr.payload.sig',
+          token_type: 'bearer',
+          actor: {
+            email: 'release-manager@acme-qa.local',
+            role: 'release_manager',
+            auth_method: 'bearer_token',
+          },
+        }),
+      };
+    }
 
     return { ok: false, status: 404, json: async () => ({ detail: 'Not found' }) };
   });
@@ -325,6 +414,7 @@ describe('AI QA & Release Engineer workspace', () => {
     fireEvent.click(within(nav).getByRole('button', { name: /CI\/CD Triage/i }));
     expect(screen.getByText(/Build Failure Log Triage/i)).toBeInTheDocument();
     expect(screen.getByText('test_checkout_discount_race')).toBeInTheDocument();
+    expect(screen.getByText(/Semantic Failure Clusters/i)).toBeInTheDocument();
 
     fireEvent.click(within(nav).getByRole('button', { name: /Regression Gates/i }));
     expect(screen.getByText(/Execute Regression Gate/i)).toBeInTheDocument();
@@ -333,12 +423,26 @@ describe('AI QA & Release Engineer workspace', () => {
     expect(screen.getByText(/checkout-service v2\.14\.0/i)).toBeInTheDocument();
     expect(screen.getByText('100/100')).toBeInTheDocument();
 
+    fireEvent.click(within(nav).getByRole('button', { name: /Integrations & Jobs/i }));
+    expect(screen.getByText(/JUnit XML \/ Playwright JSON Report Ingestion/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Run Job/i }));
+    await waitFor(() => {
+      expect(screen.getByText(/Job 'embedding_reindex' completed/i)).toBeInTheDocument();
+    });
+
     fireEvent.click(within(nav).getByRole('button', { name: /Audit & Secrets/i }));
     expect(screen.getByText(/SHA-256 Immutable Audit Trail/i)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /Scrub PII & Secrets/i }));
     await waitFor(() => {
       expect(screen.getByText(/\[REDACTED_API_KEY\]/)).toBeInTheDocument();
+    });
+
+    // Open Production Auth panel and mint a Dev JWT
+    fireEvent.click(screen.getByRole('button', { name: /Auth: dev header/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Mint Dev JWT/i }));
+    await waitFor(() => {
+      expect(screen.getByText(/Minted Bearer JWT/i)).toBeInTheDocument();
     });
   });
 });
